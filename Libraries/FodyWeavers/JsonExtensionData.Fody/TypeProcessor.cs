@@ -3,6 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
+using FieldAttributes = Mono.Cecil.FieldAttributes;
+using MethodAttributes = Mono.Cecil.MethodAttributes;
+using ParameterAttributes = Mono.Cecil.ParameterAttributes;
+using PropertyAttributes = Mono.Cecil.PropertyAttributes;
 
 namespace JsonExtensionData.Fody;
 
@@ -13,6 +17,17 @@ public partial class ModuleWeaver
     private MethodReference? _jsonIgnoreAttributeReference;
     public void ProcessType(TypeDefinition typeDefinition)
     {
+        if (typeDefinition.BaseType != null && typeDefinition.BaseType.FullName != "System.Object")
+        {
+            return;
+        }
+
+        // If the property already has somewhere on the inheritance chain the JsonExtensionDataAttribute, dont add it again
+        if (PropertiesFlattened(typeDefinition).Any(p => p.CustomAttributes.Any(a => a.AttributeType.FullName.Contains("JsonExtensionDataAttribute"))))
+        {
+            return;
+        }
+
         _dictionaryStringObjectReference ??= ModuleDefinition.ImportReference(typeof(Dictionary<string, object>));
         if (_jsonExtensionDataAttributeReference is null)
         {
@@ -61,7 +76,7 @@ public partial class ModuleWeaver
         set.Body.Instructions.Add(Instruction.Create(OpCodes.Stfld, field));
         set.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
 
-        foreach (var constructor in typeDefinition.Methods.Where(m => m.IsConstructor && !m.IsStatic && !m.IsFamily))
+        foreach (var constructor in typeDefinition.Methods.Where(m => m.IsConstructor && !m.IsStatic))
         {
             var processor = constructor.Body.GetILProcessor();
             var ldArg0 = Instruction.Create(OpCodes.Ldarg_0);
@@ -75,5 +90,23 @@ public partial class ModuleWeaver
         propertyDefinition.SetMethod = set;
         typeDefinition.Methods.Add(set);
         typeDefinition.Properties.Add(propertyDefinition);
+    }
+
+    public static List<PropertyDefinition> PropertiesFlattened(TypeDefinition asmType)
+    {
+        //get properties on main type:
+        var props = new List<PropertyDefinition>(asmType.Properties.Select(property => property));
+
+        //get properties of base types:
+        if (asmType.BaseType != null && asmType.BaseType.FullName != "System.Object")
+        {
+            var baseType = asmType.BaseType.Resolve();
+
+            //recursive call:
+            if (baseType != null)
+                props.AddRange(PropertiesFlattened(baseType));
+        }
+
+        return props;
     }
 }
