@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
@@ -59,6 +60,17 @@ public partial class ModuleWeaver
         set.Body.Instructions.Add(Instruction.Create(OpCodes.Ldarg_1));
         set.Body.Instructions.Add(Instruction.Create(OpCodes.Stfld, field));
         set.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
+
+        foreach (var constructor in typeDefinition.Methods.Where(m => m.IsConstructor && !m.IsStatic && !m.IsFamily))
+        {
+            var processor = constructor.Body.GetILProcessor();
+            var ldArg0 = Instruction.Create(OpCodes.Ldarg_0);
+            processor.InsertBefore(constructor.Body.Instructions.First(), ldArg0);
+            var newInstruction = processor.Create(OpCodes.Newobj, ModuleDefinition.ImportReference(typeof(Dictionary<string, object>).GetConstructor(Type.EmptyTypes)));
+            processor.InsertAfter(ldArg0, newInstruction);
+            var setField = processor.Create(OpCodes.Stfld, field);
+            processor.InsertAfter(newInstruction, setField);
+        }
 
         propertyDefinition.SetMethod = set;
         typeDefinition.Methods.Add(set);
